@@ -2,8 +2,23 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import umap
-from sklearn.model_selection import train_test_split
-# from sklean
+from sklearn.model_selection import train_test_split, GridSearchCV
+from xgboost import XGBClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.base import BaseEstimator
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+
+
+class CNNFeatureExtractor(BaseEstimator):
+    def __init__(self, base_estimator):
+        self.base_estimator = base_estimator
+    def transform(self, X):
+        X = X.reshape(len(X), 28, 28)
+        return self.base_estimator.predict(X)
+    def fit(self, X, y):
+        return self
+    def predict(self, X):
+        return self.transform(X)
 
 
 if __name__ == '__main__':
@@ -19,17 +34,9 @@ if __name__ == '__main__':
     x_train = x_train[train_inds] 
     y_train = y_train[train_inds]
 
-    y_train = tf.one_hot(y_train, 10)
-    y_val = tf.one_hot(y_val, 10)
-    y_test = tf.one_hot(y_test, 10)
-
-    print(y_train.shape)
-
-    # UMAP = umap.UMAP(n_components=2)
-    # x_train_transformed = UMAP.fit_transform(x_train.reshape(len(x_train), 28*28))
-
-    # plt.scatter(x_train_transformed[:, 0], x_train_transformed[:, 1], c=y_train, s=1)
-    # plt.show()
+    y_train_onehot = tf.one_hot(y_train, 10)
+    y_val_onehot = tf.one_hot(y_val, 10)
+    y_test_onehot = tf.one_hot(y_test, 10)
 
     tf_model = tf.keras.Sequential([
         tf.keras.layers.Input(shape=(28, 28, 1)),
@@ -45,7 +52,8 @@ if __name__ == '__main__':
         tf.keras.layers.MaxPooling2D(),
         tf.keras.layers.Conv2D(128, strides=1, kernel_size=5, activation='relu', kernel_initializer='he_normal', padding='same'),
         tf.keras.layers.MaxPooling2D(),
-        tf.keras.layers.Flatten(),
+        tf.keras.layers.Conv2D(256, strides=3, kernel_size=3, activation='relu', kernel_initializer='he_normal', padding='same'),
+        tf.keras.layers.Flatten(name='Flatten'),
 
         tf.keras.layers.Dense(512, activation='relu'),
         tf.keras.layers.Dense(512, activation='relu'),
@@ -64,11 +72,55 @@ if __name__ == '__main__':
 
     tf_model.compile(loss='categorical_crossentropy', metrics=['accuracy', 'f1_score', 'recall', 'precision'], optimizer=optimizer)
     tf_model.summary()
-    # tf_model_umap.compile(loss='categorical_crossentropy', metrics=['accuracy', 'f1_score', 'recall', 'precision'], optimizer=optimizer)
 
-    tf_model.fit(x_train, y_train, validation_data=(x_val, y_val), epochs=50, batch_size=64, callbacks=[tf.keras.callbacks.EarlyStopping(patience=5)])
-    tf_model.evaluate(x_test, y_test)
+    tf_model.fit(x_train, y_train_onehot, validation_data=(x_val, y_val_onehot), epochs=1, batch_size=64, callbacks=[tf.keras.callbacks.EarlyStopping(patience=5)])
+    tf_model.evaluate(x_test, y_test_onehot)
 
-    # tf_model_umap.fit(x_train_transformed, y_train, validation_data=(UMAP.transform(x_val.reshape(len(x_val), 28*28)), y_val), epochs=50, batch_size=64, callbacks=[tf.keras.callbacks.EarlyStopping(patience=5)])
-    # tf_model_umap.evaluate(UMAP.transform(x_test.reshape(len(x_test), 28*28)), y_test)
+    base_model = tf.keras.Model(inputs=tf_model.inputs, outputs=tf_model.get_layer('Flatten').output)
+    base_model.compile(loss='categorical_crossentropy')
+
+    feature_extractor = CNNFeatureExtractor(base_model)
+    xgb_classifier = XGBClassifier(n_estimators=100, max_depth=5, booster='gbtree', objective='multi:softmax', num_class=10, learning_rate=0.2, verbosity=1, device='cuda')
+
+    xgb_pipeline = Pipeline([
+        ('Feature_Extractor', feature_extractor),
+        ('XGB_Classifier', xgb_classifier)
+    ])
+
+    x_train = np.concat([x_train, x_val], axis=0)
+    y_train = np.concat([y_train, y_val], axis=0)
+
+    params = {
+        'learning_rate': np.linspace(0.1, 0.3, 3),
+        'n_estimators': np.arange(100, 301, 100),
+        'booster': ['gbtree'],
+        'max_depth': [5, 7, 9],
+        'num_class': [10],
+        'objective': ['multi:softmax'],
+        'device': ['cuda']
+    }
+
+    cv = GridSearchCV(xgb_classifier, params, scoring='accuracy', cv=3, verbose=3)
+    cv.fit(x_train.reshape(len(x_train), 28*28), y_train)
+    y_pred = cv.predict(x_test.reshape(len(x_test), 28*28))
+    print(accuracy_score(y_pred, y_test))
+
+    params_pipeline = {
+        'XGB_Classifier__learning_rate': np.linspace(0.1, 0.3, 3),
+        'XGB_Classifier__n_estimators': np.arange(100, 301, 100),
+        'XGB_Classifier__booster': ['gbtree'],
+        'XGB_Classifier__max_depth': [5, 7, 9],
+        'XGB_Classifier__num_class': [10],
+        'XGB_Classifier__objective': ['multi:softmax'],
+        'XGB_Classifier__device': ['cuda']
+    }
+
+    cv = GridSearchCV(xgb_pipeline, params_pipeline, scoring='accuracy', cv=3, verbose=3)
+    cv.fit(x_train.reshape(len(x_train), 28*28), y_train)
+    y_pred = cv.predict(x_test.reshape(len(x_test), 28*28))
+    print(accuracy_score(y_pred, y_test))
+
+
+
+
 
