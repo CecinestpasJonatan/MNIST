@@ -1,0 +1,74 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+import umap
+from sklearn.model_selection import train_test_split
+# from sklean
+
+
+if __name__ == '__main__':
+    (x_train, y_train), (x_test, y_test) = tf.keras.datasets.mnist.load_data()
+
+    n_inds = np.arange(len(y_train))
+
+    train_inds, val_inds = train_test_split(n_inds, stratify=y_train, test_size=0.1)
+
+    x_val = x_train[val_inds]
+    y_val = y_train[val_inds]
+
+    x_train = x_train[train_inds] 
+    y_train = y_train[train_inds]
+
+    y_train = tf.one_hot(y_train, 10)
+    y_val = tf.one_hot(y_val, 10)
+    y_test = tf.one_hot(y_test, 10)
+
+    print(y_train.shape)
+
+    # UMAP = umap.UMAP(n_components=2)
+    # x_train_transformed = UMAP.fit_transform(x_train.reshape(len(x_train), 28*28))
+
+    # plt.scatter(x_train_transformed[:, 0], x_train_transformed[:, 1], c=y_train, s=1)
+    # plt.show()
+
+    tf_model = tf.keras.Sequential([
+        tf.keras.layers.Input(shape=(28, 28, 1)),
+        tf.keras.layers.Rescaling(1./255.),
+
+        tf.keras.layers.RandomTranslation(0.1, 0.1, fill_mode='constant'),
+        tf.keras.layers.RandomRotation(0.05, fill_mode='constant'),
+        tf.keras.layers.RandomZoom(0.05, fill_mode='constant'),
+
+        tf.keras.layers.Conv2D(32, strides=1, kernel_size=5, activation='relu', kernel_initializer='he_normal', padding='same'),
+        tf.keras.layers.MaxPooling2D(),
+        tf.keras.layers.Conv2D(64, strides=1, kernel_size=5, activation='relu', kernel_initializer='he_normal', padding='same'),
+        tf.keras.layers.MaxPooling2D(),
+        tf.keras.layers.Conv2D(128, strides=1, kernel_size=5, activation='relu', kernel_initializer='he_normal', padding='same'),
+        tf.keras.layers.MaxPooling2D(),
+        tf.keras.layers.Flatten(),
+
+        tf.keras.layers.Dense(512, activation='relu'),
+        tf.keras.layers.Dense(512, activation='relu'),
+        tf.keras.layers.Dense(10, activation='softmax'),
+    ])
+
+    tf_model_umap = tf.keras.Sequential([
+        tf.keras.layers.Input(shape=(10,)),
+        tf.keras.layers.Dense(64, activation='relu'),
+        tf.keras.layers.Dense(64, activation='relu'),
+        tf.keras.layers.Dense(10, activation='softmax'),
+    ])
+
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=0.001, decay_steps=844, decay_rate=0.9)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+
+    tf_model.compile(loss='categorical_crossentropy', metrics=['accuracy', 'f1_score', 'recall', 'precision'], optimizer=optimizer)
+    tf_model.summary()
+    # tf_model_umap.compile(loss='categorical_crossentropy', metrics=['accuracy', 'f1_score', 'recall', 'precision'], optimizer=optimizer)
+
+    tf_model.fit(x_train, y_train, validation_data=(x_val, y_val), epochs=50, batch_size=64, callbacks=[tf.keras.callbacks.EarlyStopping(patience=5)])
+    tf_model.evaluate(x_test, y_test)
+
+    # tf_model_umap.fit(x_train_transformed, y_train, validation_data=(UMAP.transform(x_val.reshape(len(x_val), 28*28)), y_val), epochs=50, batch_size=64, callbacks=[tf.keras.callbacks.EarlyStopping(patience=5)])
+    # tf_model_umap.evaluate(UMAP.transform(x_test.reshape(len(x_test), 28*28)), y_test)
+
